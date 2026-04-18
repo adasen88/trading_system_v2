@@ -8,12 +8,21 @@ GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 CLOB_URL = "https://clob.polymarket.com"
 
 BTC_INTERVAL = 5
-PM_INTERVAL = 2   # PM 轮询间隔（秒）
+PM_INTERVAL = 2
 HIST_INTERVAL = 60
 
 _last_window_end = 0
 _cached_yes_token = None
 _cached_no_token = None
+_clob_client = None
+
+def _get_clob_client():
+    """延迟初始化 CLOB 客户端（读操作无需认证）"""
+    global _clob_client
+    if _clob_client is None:
+        from py_clob_client.client import ClobClient
+        _clob_client = ClobClient(CLOB_URL)
+    return _clob_client
 
 def _write_state(data):
     tmp = STATE_FILE + ".tmp"
@@ -57,24 +66,6 @@ def fetch_candles(interval, limit=100):
         print("[DATA][WARN] klines:", e, flush=True)
     return []
 
-def _fetch_clob_price(token_id: str) -> tuple[float, float] | None:
-    """从 CLOB /price 接口获取最佳买/卖价，返回 (bid, ask)"""
-    try:
-        r_bid = requests.get(CLOB_URL + "/price",
-            params={"token_id": token_id, "side": "BUY"}, timeout=3,
-            headers={"User-Agent": "Mozilla/5.0"})
-        r_ask = requests.get(CLOB_URL + "/price",
-            params={"token_id": token_id, "side": "SELL"}, timeout=3,
-            headers={"User-Agent": "Mozilla/5.0"})
-        if r_bid.status_code == 200 and r_ask.status_code == 200:
-            bid = float(r_bid.json().get("price", 0))
-            ask = float(r_ask.json().get("price", 0))
-            if bid > 0 and ask > 0:
-                return bid, ask
-    except Exception:
-        pass
-    return None
-
 def _fetch_pm_price():
     global _cached_yes_token, _cached_no_token, _last_window_end
     now_ts = int(time.time())
@@ -88,7 +79,7 @@ def _fetch_pm_price():
         remaining = window_end - now_ts
         print(f"[DATA] PM window: {slug} (ends in {remaining}s)", flush=True)
 
-    # 每个新窗口获取一次 token_id
+    # 每个新窗口从 Gamma 获取 token_id
     if _cached_yes_token is None:
         try:
             r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
@@ -99,11 +90,43 @@ def _fetch_pm_price():
                     if len(clob_ids) >= 2:
                         _cached_yes_token = clob_ids[0]
                         _cached_no_token = clob_ids[1]
+                        print(f"[DATA]   token_ids: YES={_cached_yes_token[:16]}... NO={_cached_no_token[:16]}...", flush=True)
         except Exception as e:
             print(f"[DATA][WARN] PM gamma:", e, flush=True)
             return 0.0, 0.0, slug
 
-    # 优先：Gamma outcomePrices（上次成交价）
+    if _cached_yes_token is None:
+        return 0.0, 0.0, slug
+
+    # 方法1：py_clob_client.get_last_trade_price（实际成交价）
+    try:
+        client = _get_clob_client()
+        last_yes = client.get_last_trade_price(_cached_yes_token)
+        last_no = client.get_last_trade_price(_cached_no_token)
+        if last_yes is not None and last_no is not None:
+            yes = float(last_yes)
+            no = float(last_no)
+            if 0 < yes < 1 and 0 < no < 1:
+                print(f"[DATA]   CLOB last trade: YES={yes:.4f} NO={no:.4f}", flush=True)
+                return yes, no, slug
+    except Exception as e:
+        print(f"[DATA][WARN] CLOB last_trade:", e, flush=True)
+
+    # 方法2：py_clob_client.get_midpoint（中价）
+    try:
+        client = _get_clob_client()
+        mid_yes = client.get_midpoint(_cached_yes_token)
+        mid_no = client.get_midpoint(_cached_no_token)
+        if mid_yes is not None and mid_no is not None:
+            yes = float(mid_yes)
+            no = float(mid_no)
+            if 0 < yes < 1 and 0 < no < 1:
+                print(f"[DATA]   CLOB midpoint: YES={yes:.4f} NO={no:.4f}", flush=True)
+                return yes, no, slug
+    except Exception as e:
+        print(f"[DATA][WARN] CLOB midpoint:", e, flush=True)
+
+    # 方法3：Gamma outcomePrices（上次成交价，作兜底）
     try:
         r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
         if r.status_code == 200:
@@ -114,18 +137,10 @@ def _fetch_pm_price():
                 if isinstance(prices, list) and len(prices) >= 2:
                     yes = float(prices[0])
                     no = float(prices[1])
-                    return yes, no, slug
+                    if yes > 0 and no > 0:
+                        return yes, no, slug
     except Exception:
         pass
-
-    # Fallback：CLOB /price 实时最佳买卖价
-    if _cached_yes_token:
-        result = _fetch_clob_price(_cached_yes_token)
-        if result:
-            bid, ask = result
-            yes = (bid + ask) / 2
-            no = 1.0 - yes
-            return yes, no, slug
 
     return 0.0, 0.0, slug
 

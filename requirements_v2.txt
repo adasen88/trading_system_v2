@@ -1,4 +1,5 @@
 # v2 依赖（最小集）
 requests
+py-clob-client
 fastapi
 uvicorn
