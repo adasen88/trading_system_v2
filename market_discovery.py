@@ -42,9 +42,10 @@ class MarketDiscovery:
         """
         now_ts = int(time.time())
         
-        # 生成最近窗口的slug列表（使用已结束的窗口）
-        # 当前时间戳向下取整到最近的5分钟边界，作为最新窗口的结束时间
-        window_end = math.floor(now_ts / 300) * 300
+        # 生成最近窗口的slug列表
+        # 使用math.ceil获取最近的未来结束时间（当前活跃窗口的结束时间）
+        # 然后向后查询lookback_windows个窗口
+        window_end = math.ceil(now_ts / 300) * 300
         recent_slugs = []
         
         for i in range(lookback_windows):
@@ -56,7 +57,19 @@ class MarketDiscovery:
         if not recent_slugs:
             return []
         
-        print(f"[MarketDiscovery] Querying slugs: {recent_slugs[:3]}... (total {len(recent_slugs)})", flush=True)
+        # 调试信息：显示时间戳对应的人类可读时间
+        from datetime import datetime, timezone
+        debug_slugs = []
+        for slug in recent_slugs[:3]:
+            try:
+                ts = int(slug.split("-")[-1])
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                debug_slugs.append(f"{slug} ({dt.strftime('%H:%M:%S UTC')})")
+            except:
+                debug_slugs.append(slug)
+        
+        print(f"[MarketDiscovery] Querying slugs: {debug_slugs}... (total {len(recent_slugs)})", flush=True)
+        print(f"[MarketDiscovery] Current time: {datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime('%H:%M:%S UTC')}", flush=True)
         
         # 获取市场数据
         markets = self._get_markets_by_slugs(recent_slugs)
