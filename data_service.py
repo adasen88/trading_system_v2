@@ -65,64 +65,113 @@ def fetch_candles(interval, limit=100):
 def _fetch_pm_price():
     global _last_window_slug
     now_ts = int(time.time())
-    window_end = math.ceil(now_ts / 300) * 300
-    window_slug = "btc-updown-5m-" + str(window_end)
-
-    if window_slug != _last_window_slug:
-        _last_window_slug = window_slug
-        print(f"[DATA] PM window: {window_slug} (ends in {window_end - now_ts}s)", flush=True)
-
+    
     client = _get_pm_client()
-
+    
     try:
+        # 获取最近的 BTC 5分钟市场（最多 20 个）
         markets = client.get_markets(
-            slug=[window_slug],
+            query="btc-updown-5m",
             expand_clob_token_ids=True,
             expand_events=False,
             expand_series=False,
+            limit=20,
         )
         if markets.empty:
-            print(f"[DATA][WARN] No market for {window_slug}", flush=True)
-            return 0.0, 0.0, window_slug
+            print(f"[DATA][WARN] No BTC 5min markets found", flush=True)
+            return 0.0, 0.0, ""
     except Exception as e:
         print(f"[DATA][WARN] get_markets:", e, flush=True)
-        return 0.0, 0.0, window_slug
-
-    # Gamma 返回一个市场，clobTokenIds 是包含两个 token 的列表
-    # outcomes=['Up','Down'], outcomePrices=[p_up, p_down]
+        return 0.0, 0.0, ""
+    
     rows = markets.to_dict("records")
     if len(rows) == 0:
         print(f"[DATA][WARN] No market rows", flush=True)
-        return 0.0, 0.0, window_slug
-
-    # 取第一行（应该只有一行）
-    market = rows[0]
+        return 0.0, 0.0, ""
     
-    # 检查是否为可交易市场
-    # 1. tokens 字段应有至少两个 token
-    tokens = market.get("tokens") or []
-    if not isinstance(tokens, list):
-        tokens = []
-    
-    # 2. 检查 clobTokenIds 是否可能是列表
-    clob_ids_raw = market.get("clobTokenIds")
-    clob_ids_possible = False
-    if clob_ids_raw:
-        if isinstance(clob_ids_raw, str):
+    # 按结束时间倒序排序（最新的在前）
+    def get_end_time(market):
+        # 优先从 slug 中提取时间戳（格式: btc-updown-5m-{timestamp}）
+        slug = market.get("slug", "")
+        if slug.startswith("btc-updown-5m-"):
             try:
-                parsed = json.loads(clob_ids_raw)
-                clob_ids_possible = isinstance(parsed, list) and len(parsed) >= 2
+                return int(slug.split("-")[-1])
             except:
                 pass
-        elif isinstance(clob_ids_raw, list):
-            clob_ids_possible = len(clob_ids_raw) >= 2
+        
+        # 回退到解析 end_date_iso
+        end_str = market.get("end_date_iso", "")
+        if end_str:
+            try:
+                # 尝试解析 ISO 8601 格式
+                from datetime import datetime
+                # 移除时区信息以便解析
+                if end_str.endswith("Z"):
+                    end_str = end_str[:-1] + "+00:00"
+                dt = datetime.fromisoformat(end_str)
+                return int(dt.timestamp())
+            except Exception as e:
+                print(f"[DATA][WARN] Failed to parse end_date_iso '{end_str}': {e}", flush=True)
+        
+        return 0
     
-    # 如果既没有足够的 tokens，clobTokenIds 也不可能是列表，跳过
-    if len(tokens) < 2 and not clob_ids_possible:
-        print(f"[DATA][SKIP] Non-tradable market: tokens={len(tokens)}, clobTokenIds={clob_ids_raw}", flush=True)
-        return 0.0, 0.0, window_slug
+    rows.sort(key=get_end_time, reverse=True)
     
-    # 解析 clobTokenIds （使用上面已经定义的 clob_ids_raw）
+    selected_market = None
+    selected_slug = ""
+    
+    # 从最新到最旧扫描，找到第一个可交易市场
+    for market in rows:
+        slug = market.get("slug", "")
+        if not slug.startswith("btc-updown-5m-"):
+            continue
+            
+        # 检查是否为可交易市场
+        tokens = market.get("tokens") or []
+        if not isinstance(tokens, list):
+            tokens = []
+        
+        clob_ids_raw = market.get("clobTokenIds")
+        clob_ids_possible = False
+        if clob_ids_raw:
+            if isinstance(clob_ids_raw, str):
+                try:
+                    parsed = json.loads(clob_ids_raw)
+                    clob_ids_possible = isinstance(parsed, list) and len(parsed) >= 2
+                except:
+                    pass
+            elif isinstance(clob_ids_raw, list):
+                clob_ids_possible = len(clob_ids_raw) >= 2
+        
+        # 可交易条件：至少有 tokens 或可能的 clobTokenIds
+        if len(tokens) >= 2 or clob_ids_possible:
+            selected_market = market
+            selected_slug = slug
+            break
+        else:
+            print(f"[DATA][SKIP] Non-tradable: {slug} tokens={len(tokens)}", flush=True)
+    
+    if not selected_market:
+        print(f"[DATA][WARN] No tradable market found among {len(rows)} markets", flush=True)
+        return 0.0, 0.0, ""
+    
+    market = selected_market
+    window_slug = selected_slug
+    
+    if window_slug != _last_window_slug:
+        _last_window_slug = window_slug
+        # 计算剩余时间
+        end_time = get_end_time(market)
+        if end_time > 0:
+            remaining = end_time - now_ts
+            print(f"[DATA] Selected tradable market: {window_slug} (ends in {remaining}s)", flush=True)
+        else:
+            print(f"[DATA] Selected tradable market: {window_slug}", flush=True)
+    
+    # 从选中的市场中重新获取字段
+    clob_ids_raw = market.get("clobTokenIds")
+    
+    # 解析 clobTokenIds
     clob_ids = []
     if clob_ids_raw:
         if isinstance(clob_ids_raw, str):
