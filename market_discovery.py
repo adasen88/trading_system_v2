@@ -34,63 +34,74 @@ class MarketDiscovery:
         """
         发现BTC 5分钟可交易市场
         
-        Args:
-            lookback_windows: 向后查找的窗口数量
-            
-        Returns:
-            可交易市场列表，按时间倒序排序
+        通过搜索Gamma API获取btc-updown-5m市场，然后按结束时间排序
         """
+        from datetime import datetime, timezone
         now_ts = int(time.time())
         
-        # 生成最近窗口的slug列表
-        # 使用math.ceil获取最近的未来结束时间（当前活跃窗口的结束时间）
-        # 然后向后查询lookback_windows个窗口
-        window_end = math.ceil(now_ts / 300) * 300
-        recent_slugs = []
-        
-        for i in range(lookback_windows):
-            w_end = window_end - i * 300
-            if w_end <= 0:
-                break
-            recent_slugs.append(f"btc-updown-5m-{w_end}")
-        
-        if not recent_slugs:
-            return []
-        
-        # 调试信息：显示时间戳对应的人类可读时间
-        from datetime import datetime, timezone
-        debug_slugs = []
-        for slug in recent_slugs[:3]:
-            try:
-                ts = int(slug.split("-")[-1])
-                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                debug_slugs.append(f"{slug} ({dt.strftime('%H:%M:%S UTC')})")
-            except:
-                debug_slugs.append(slug)
-        
-        print(f"[MarketDiscovery] Querying slugs: {debug_slugs}... (total {len(recent_slugs)})", flush=True)
+        print(f"[MarketDiscovery] Searching for BTC 5min markets...", flush=True)
         print(f"[MarketDiscovery] Current time: {datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime('%H:%M:%S UTC')}", flush=True)
         
-        # 获取市场数据
-        markets = self._get_markets_by_slugs(recent_slugs)
-        
-        print(f"[MarketDiscovery] Got {len(markets)} markets from API", flush=True)
-        
-        # 过滤可交易市场
-        tradable_markets = []
-        for market in markets:
+        try:
+            # 方法1: 使用search_markets搜索相关市场
+            search_results = []
             try:
-                tradable = self._validate_and_create_tradable(market)
-                tradable_markets.append(tradable)
-            except MarketNotTradableError as e:
-                # 记录但跳过不可交易市场
-                print(f"[MarketDiscovery] {e}", flush=True)
-                continue
-        
-        # 按结束时间倒序排序（最新的在前）
-        tradable_markets.sort(key=lambda m: m.expires_at, reverse=True)
-        
-        return tradable_markets
+                # 尝试搜索btc-updown-5m
+                search_results = self.gamma_client.search_markets("btc-updown-5m", limit=50)
+                print(f"[MarketDiscovery] Search 'btc-updown-5m' returned {len(search_results)} markets", flush=True)
+            except Exception as e:
+                print(f"[MarketDiscovery] Search failed: {e}", flush=True)
+                
+            # 如果搜索结果为空，尝试获取所有市场然后过滤
+            if not search_results:
+                print(f"[MarketDiscovery] Search returned empty, trying alternative approach", flush=True)
+                # 可能需要使用不同的查询参数或获取所有市场
+                # 暂时回退到原来的slug方法（但用更灵活的查询）
+                # 使用当前时间附近的窗口
+                window_end = math.ceil(now_ts / 300) * 300
+                recent_slugs = []
+                
+                for i in range(lookback_windows):
+                    w_end = window_end - i * 300
+                    if w_end <= 0:
+                        break
+                    recent_slugs.append(f"btc-updown-5m-{w_end}")
+                
+                if recent_slugs:
+                    print(f"[MarketDiscovery] Falling back to slug query: {recent_slugs[:3]}...", flush=True)
+                    search_results = self.gamma_client.get_markets_by_slugs(recent_slugs)
+                    print(f"[MarketDiscovery] Slug query returned {len(search_results)} markets", flush=True)
+            
+            if not search_results:
+                print(f"[MarketDiscovery] No markets found", flush=True)
+                return []
+            
+            # 打印找到的市场信息
+            for i, market in enumerate(search_results[:5]):
+                print(f"[MarketDiscovery] Market {i}: slug={market.slug}, clob_token_ids={len(market.clob_token_ids)}, accepting_orders={market.accepting_orders}", flush=True)
+                
+            # 过滤可交易市场
+            tradable_markets = []
+            for market in search_results:
+                try:
+                    tradable = self._validate_and_create_tradable(market)
+                    tradable_markets.append(tradable)
+                except MarketNotTradableError as e:
+                    # 记录但跳过不可交易市场
+                    print(f"[MarketDiscovery] {e}", flush=True)
+                    continue
+            
+            # 按结束时间倒序排序（最新的在前）
+            tradable_markets.sort(key=lambda m: m.expires_at, reverse=True)
+            
+            print(f"[MarketDiscovery] Found {len(tradable_markets)} tradable markets", flush=True)
+            return tradable_markets
+            
+        except Exception as e:
+            print(f"[MarketDiscovery] Error discovering markets: {e}", flush=True)
+            import traceback
+            print(f"[MarketDiscovery] Traceback: {traceback.format_exc()}", flush=True)
+            return []
     
     def _get_markets_by_slugs(self, slugs: List[str]) -> List[Market]:
         """获取市场数据，支持缓存"""
