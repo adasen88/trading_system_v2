@@ -66,11 +66,15 @@ class GammaClient:
         try:
             # Gamma API支持批量查询
             params = {"slug": ",".join(slugs)}
+            print(f"[Gamma] GammaClient.get_markets_by_slugs calling API with params: {params}", flush=True)
+            
             response = self.session.get(
                 f"{self.BASE_URL}/markets",
                 params=params,
                 timeout=10
             )
+            
+            print(f"[Gamma] API response status: {response.status_code}", flush=True)
             
             if response.status_code == 429:
                 raise RateLimitError("Gamma API rate limit exceeded")
@@ -78,17 +82,22 @@ class GammaClient:
             response.raise_for_status()
             
             markets_data = response.json()
+            print(f"[Gamma] API returned {len(markets_data)} market(s)", flush=True)
+            
             markets = []
             
-            for market_data in markets_data:
+            for idx, market_data in enumerate(markets_data):
                 try:
+                    print(f"[Gamma] Parsing market {idx}: slug={market_data.get('slug')}", flush=True)
                     market = self._parse_market(market_data)
                     markets.append(market)
+                    print(f"[Gamma] Market {idx} parsed: clob_token_ids={len(market.clob_token_ids)}", flush=True)
                 except Exception as e:
                     # 记录但跳过解析失败的市场
-                    print(f"[Gamma] Failed to parse market {market_data.get('slug')}: {e}")
+                    print(f"[Gamma] Failed to parse market {market_data.get('slug')}: {e}", flush=True)
                     continue
             
+            print(f"[Gamma] Returning {len(markets)} markets", flush=True)
             return markets
             
         except requests.RequestException as e:
@@ -106,15 +115,23 @@ class GammaClient:
                 tokens = []
         
         # 解析clobTokenIds字段
-        clob_token_ids = data.get("clobTokenIds", [])
+        clob_token_ids_raw = data.get("clobTokenIds", [])
+        print(f"[Gamma] _parse_market clobTokenIds raw: type={type(clob_token_ids_raw)}, value={repr(clob_token_ids_raw)}", flush=True)
+        
+        clob_token_ids = clob_token_ids_raw
         if isinstance(clob_token_ids, str):
             try:
                 import json
                 clob_token_ids = json.loads(clob_token_ids)
+                print(f"[Gamma] _parse_market clobTokenIds parsed: {clob_token_ids}, type={type(clob_token_ids)}", flush=True)
                 if not isinstance(clob_token_ids, list):
+                    print(f"[Gamma] _parse_market clobTokenIds not a list after parsing", flush=True)
                     clob_token_ids = []
-            except:
+            except Exception as e:
+                print(f"[Gamma] _parse_market clobTokenIds JSON parse error: {e}", flush=True)
                 clob_token_ids = []
+        
+        print(f"[Gamma] _parse_market final clob_token_ids: {clob_token_ids}", flush=True)
         
         # 解析outcomePrices字段
         outcome_prices = data.get("outcomePrices", [])
@@ -203,6 +220,8 @@ try:
         def get_markets_by_slugs(self, slugs: List[str]) -> List[Market]:
             """使用polymarket-pandas获取市场数据"""
             try:
+                print(f"[Gamma] PolymarketPandasAdapter.get_markets_by_slugs called with slugs: {slugs}", flush=True)
+                
                 df = self.pandas_client.get_markets(
                     slug=slugs,
                     expand_clob_token_ids=True,
@@ -210,29 +229,43 @@ try:
                     expand_series=False
                 )
                 
+                print(f"[Gamma] pandas get_markets returned DataFrame shape: {df.shape}", flush=True)
+                if not df.empty:
+                    print(f"[Gamma] DataFrame columns: {df.columns.tolist()}", flush=True)
+                    # 打印前几行的clobTokenIds值
+                    for idx, row in df.head(3).iterrows():
+                        clob_raw = row.get("clobTokenIds")
+                        print(f"[Gamma] Row {idx} slug={row.get('slug')}, clobTokenIds type={type(clob_raw)}, value={repr(clob_raw)}", flush=True)
+                
                 if df.empty:
+                    print(f"[Gamma] DataFrame is empty", flush=True)
                     return []
                 
                 markets = []
-                for _, row in df.iterrows():
+                for idx, row in df.iterrows():
                     try:
+                        clob_raw = row.get("clobTokenIds")
+                        clob_parsed = self._parse_clob_ids(clob_raw)
+                        
                         market = Market(
                             slug=row.get("slug", ""),
                             question=row.get("question", ""),
                             outcomes=row.get("outcomes", []),
                             outcome_prices=self._parse_prices(row.get("outcomePrices")),
                             tokens=row.get("tokens", []),
-                            clob_token_ids=self._parse_clob_ids(row.get("clobTokenIds")),
+                            clob_token_ids=clob_parsed,
                             accepting_orders=row.get("accepting_orders", False),
                             end_date_iso=row.get("end_date_iso", ""),
                             volume=float(row.get("volume", 0)),
                             liquidity=float(row.get("liquidity", 0))
                         )
                         markets.append(market)
+                        print(f"[Gamma] Created market: {market.slug}, clob_token_ids={len(clob_parsed)}", flush=True)
                     except Exception as e:
-                        print(f"[Gamma] Failed to parse pandas row: {e}")
+                        print(f"[Gamma] Failed to parse pandas row {idx}: {e}", flush=True)
                         continue
                 
+                print(f"[Gamma] Returning {len(markets)} markets", flush=True)
                 return markets
                 
             except Exception as e:
@@ -256,16 +289,25 @@ try:
         
         def _parse_clob_ids(self, clob_ids_raw) -> List[str]:
             """解析clobTokenIds字段"""
+            print(f"[Gamma] _parse_clob_ids raw type: {type(clob_ids_raw)}, value: {repr(clob_ids_raw)}", flush=True)
+            
             if isinstance(clob_ids_raw, list):
-                return [str(id_) for id_ in clob_ids_raw]
+                result = [str(id_) for id_ in clob_ids_raw]
+                print(f"[Gamma] _parse_clob_ids list result: {result}", flush=True)
+                return result
             elif isinstance(clob_ids_raw, str):
                 try:
                     import json
                     parsed = json.loads(clob_ids_raw)
+                    print(f"[Gamma] _parse_clob_ids parsed: {parsed}, type: {type(parsed)}", flush=True)
                     if isinstance(parsed, list):
-                        return [str(id_) for id_ in parsed]
-                except:
+                        result = [str(id_) for id_ in parsed]
+                        print(f"[Gamma] _parse_clob_ids str result: {result}", flush=True)
+                        return result
+                except Exception as e:
+                    print(f"[Gamma] _parse_clob_ids JSON parse error: {e}", flush=True)
                     pass
+            print(f"[Gamma] _parse_clob_ids returning empty list", flush=True)
             return []
     
     # 默认使用适配器

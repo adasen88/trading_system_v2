@@ -42,8 +42,9 @@ class MarketDiscovery:
         """
         now_ts = int(time.time())
         
-        # 生成最近窗口的slug列表
-        window_end = math.ceil(now_ts / 300) * 300
+        # 生成最近窗口的slug列表（使用已结束的窗口）
+        # 当前时间戳向下取整到最近的5分钟边界，作为最新窗口的结束时间
+        window_end = math.floor(now_ts / 300) * 300
         recent_slugs = []
         
         for i in range(lookback_windows):
@@ -55,8 +56,12 @@ class MarketDiscovery:
         if not recent_slugs:
             return []
         
+        print(f"[MarketDiscovery] Querying slugs: {recent_slugs[:3]}... (total {len(recent_slugs)})", flush=True)
+        
         # 获取市场数据
         markets = self._get_markets_by_slugs(recent_slugs)
+        
+        print(f"[MarketDiscovery] Got {len(markets)} markets from API", flush=True)
         
         # 过滤可交易市场
         tradable_markets = []
@@ -66,7 +71,7 @@ class MarketDiscovery:
                 tradable_markets.append(tradable)
             except MarketNotTradableError as e:
                 # 记录但跳过不可交易市场
-                print(f"[MarketDiscovery] {e}")
+                print(f"[MarketDiscovery] {e}", flush=True)
                 continue
         
         # 按结束时间倒序排序（最新的在前）
