@@ -106,26 +106,15 @@ class MarketDiscovery:
     def _validate_and_create_tradable(self, market: Market) -> TradableMarket:
         """验证市场可交易性并创建TradableMarket对象"""
         
-        # 1. 检查accepting_orders
-        if not market.accepting_orders:
-            raise MarketNotTradableError(
-                market.slug, 
-                "Market not accepting orders"
-            )
-        
-        # 2. 检查tokens字段
-        if len(market.tokens) < 2:
-            raise MarketNotTradableError(
-                market.slug,
-                f"Insufficient tokens: {len(market.tokens)}"
-            )
-        
-        # 3. 检查clobTokenIds字段
+        # 1. 只检查clobTokenIds字段（唯一可交易性标准）
         if len(market.clob_token_ids) < 2:
             raise MarketNotTradableError(
                 market.slug,
                 f"Insufficient CLOB token IDs: {len(market.clob_token_ids)}"
             )
+        
+        # 2. 记录市场状态（调试用）
+        print(f"[MarketDiscovery] Market {market.slug}: clob_token_ids={len(market.clob_token_ids)}, accepting_orders={market.accepting_orders}, tokens={len(market.tokens)}", flush=True)
         
         # 4. 解析YES/NO token
         yes_token, no_token = self._resolve_yes_no_tokens(market)
