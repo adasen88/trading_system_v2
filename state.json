@@ -1,0 +1,13 @@
+{
+  "btc": 0,
+  "btc_source": null,
+  "pm_yes": 0,
+  "pm_no": 0,
+  "pm_spread": 0,
+  "candles_1m": [],
+  "candles_5m": [],
+  "candles_15m": [],
+  "data_ts": null,
+  "signal": null,
+  "decision": null
+}
