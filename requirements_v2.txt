@@ -1,5 +1,7 @@
 # v2 依赖（最小集）
 requests
+pandas
+polymarket-pandas
 py-clob-client
 fastapi
 uvicorn
