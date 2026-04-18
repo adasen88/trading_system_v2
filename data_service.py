@@ -17,7 +17,6 @@ _cached_no_token = None
 _clob_client = None
 
 def _get_clob_client():
-    """延迟初始化 CLOB 客户端（读操作无需认证）"""
     global _clob_client
     if _clob_client is None:
         from py_clob_client.client import ClobClient
@@ -66,6 +65,29 @@ def fetch_candles(interval, limit=100):
         print("[DATA][WARN] klines:", e, flush=True)
     return []
 
+def _get_token_ids_for_window(slug: str):
+    """从 py_clob_client.get_markets() 获取当前窗口的 YES/NO token_id"""
+    try:
+        client = _get_clob_client()
+        resp = client.get_markets()
+        markets = resp.get("data", []) if isinstance(resp, dict) else (resp or [])
+        for m in markets:
+            if m.get("slug") == slug:
+                tokens = m.get("tokens", []) or []
+                for t in tokens:
+                    outcome = (t.get("outcome") or "").lower()
+                    if outcome == "yes":
+                        print(f"[DATA]   [DEBUG] YES token from get_markets: {t.get('token_id')}", flush=True)
+                    elif outcome == "no":
+                        print(f"[DATA]   [DEBUG] NO token from get_markets: {t.get('token_id')}", flush=True)
+                yes_t = next((t["token_id"] for t in tokens if (t.get("outcome") or "").lower() == "yes"), None)
+                no_t = next((t["token_id"] for t in tokens if (t.get("outcome") or "").lower() == "no"), None)
+                if yes_t and no_t:
+                    return yes_t, no_t
+    except Exception as e:
+        print(f"[DATA][WARN] get_markets:", e, flush=True)
+    return None, None
+
 def _fetch_pm_price():
     global _cached_yes_token, _cached_no_token, _last_window_end
     now_ts = int(time.time())
@@ -79,26 +101,33 @@ def _fetch_pm_price():
         remaining = window_end - now_ts
         print(f"[DATA] PM window: {slug} (ends in {remaining}s)", flush=True)
 
-    # 每个新窗口从 Gamma 获取 token_id
+    # 每个新窗口用 get_markets 获取 token_id
     if _cached_yes_token is None:
-        try:
-            r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
-            if r.status_code == 200:
-                markets = r.json()
-                if markets:
-                    clob_ids = markets[0].get("clobTokenIds") or []
-                    if len(clob_ids) >= 2:
-                        _cached_yes_token = clob_ids[0]
-                        _cached_no_token = clob_ids[1]
-                        print(f"[DATA]   token_ids: YES={_cached_yes_token[:16]}... NO={_cached_no_token[:16]}...", flush=True)
-        except Exception as e:
-            print(f"[DATA][WARN] PM gamma:", e, flush=True)
-            return 0.0, 0.0, slug
+        yes_t, no_t = _get_token_ids_for_window(slug)
+        if yes_t and no_t:
+            _cached_yes_token = yes_t
+            _cached_no_token = no_t
+            print(f"[DATA]   tokens: YES={yes_t[:20]}... NO={no_t[:20]}...", flush=True)
+        else:
+            # Fallback: 从 Gamma 直接获取 clobTokenIds
+            try:
+                r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
+                if r.status_code == 200:
+                    markets = r.json()
+                    if markets:
+                        clob_ids = markets[0].get("clobTokenIds") or []
+                        print(f"[DATA]   [DEBUG] Gamma clobTokenIds: {clob_ids}", flush=True)
+                        if len(clob_ids) >= 2:
+                            _cached_yes_token = clob_ids[0]
+                            _cached_no_token = clob_ids[1]
+                            print(f"[DATA]   Gamma fallback tokens: YES={_cached_yes_token[:20]}... NO={_cached_no_token[:20]}...", flush=True)
+            except Exception as e:
+                print(f"[DATA][WARN] PM gamma:", e, flush=True)
 
     if _cached_yes_token is None:
         return 0.0, 0.0, slug
 
-    # 方法1：py_clob_client.get_last_trade_price（实际成交价）
+    # 方法1：CLOB last trade price
     try:
         client = _get_clob_client()
         last_yes = client.get_last_trade_price(_cached_yes_token)
@@ -109,10 +138,12 @@ def _fetch_pm_price():
             if 0 < yes < 1 and 0 < no < 1:
                 print(f"[DATA]   CLOB last trade: YES={yes:.4f} NO={no:.4f}", flush=True)
                 return yes, no, slug
+        else:
+            print(f"[DATA][DEBUG] last_trade: yes={last_yes} no={last_no}", flush=True)
     except Exception as e:
         print(f"[DATA][WARN] CLOB last_trade:", e, flush=True)
 
-    # 方法2：py_clob_client.get_midpoint（中价）
+    # 方法2：CLOB midpoint
     try:
         client = _get_clob_client()
         mid_yes = client.get_midpoint(_cached_yes_token)
@@ -123,10 +154,12 @@ def _fetch_pm_price():
             if 0 < yes < 1 and 0 < no < 1:
                 print(f"[DATA]   CLOB midpoint: YES={yes:.4f} NO={no:.4f}", flush=True)
                 return yes, no, slug
+        else:
+            print(f"[DATA][DEBUG] midpoint: yes={mid_yes} no={mid_no}", flush=True)
     except Exception as e:
         print(f"[DATA][WARN] CLOB midpoint:", e, flush=True)
 
-    # 方法3：Gamma outcomePrices（上次成交价，作兜底）
+    # 方法3：Gamma outcomePrices
     try:
         r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
         if r.status_code == 200:
