@@ -98,8 +98,31 @@ def _fetch_pm_price():
     # 取第一行（应该只有一行）
     market = rows[0]
     
-    # 解析 clobTokenIds （可能是 JSON 字符串或列表）
+    # 检查是否为可交易市场
+    # 1. tokens 字段应有至少两个 token
+    tokens = market.get("tokens") or []
+    if not isinstance(tokens, list):
+        tokens = []
+    
+    # 2. 检查 clobTokenIds 是否可能是列表
     clob_ids_raw = market.get("clobTokenIds")
+    clob_ids_possible = False
+    if clob_ids_raw:
+        if isinstance(clob_ids_raw, str):
+            try:
+                parsed = json.loads(clob_ids_raw)
+                clob_ids_possible = isinstance(parsed, list) and len(parsed) >= 2
+            except:
+                pass
+        elif isinstance(clob_ids_raw, list):
+            clob_ids_possible = len(clob_ids_raw) >= 2
+    
+    # 如果既没有足够的 tokens，clobTokenIds 也不可能是列表，跳过
+    if len(tokens) < 2 and not clob_ids_possible:
+        print(f"[DATA][SKIP] Non-tradable market: tokens={len(tokens)}, clobTokenIds={clob_ids_raw}", flush=True)
+        return 0.0, 0.0, window_slug
+    
+    # 解析 clobTokenIds （使用上面已经定义的 clob_ids_raw）
     clob_ids = []
     if clob_ids_raw:
         if isinstance(clob_ids_raw, str):
