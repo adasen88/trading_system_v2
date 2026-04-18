@@ -120,14 +120,6 @@ def _fetch_pm_price():
             print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}={clob_ids_raw}", flush=True)
             clob_ids = []
     
-    if len(clob_ids) < 2:
-        print(f"[DATA][WARN] Need at least 2 token IDs, got {len(clob_ids)} (raw: {clob_ids_raw})", flush=True)
-        return 0.0, 0.0, window_slug
-    
-    # 第一个 token 是 UP，第二个是 DOWN
-    up_tid = clob_ids[0]
-    down_tid = clob_ids[1]
-    
     # 解析 outcomes 和 outcomePrices
     outcomes = market.get("outcomes") or []
     prices_raw = market.get("outcomePrices") or []
@@ -154,26 +146,33 @@ def _fetch_pm_price():
     p_up = float(prices[up_idx]) if up_idx < len(prices) else None
     p_down = float(prices[down_idx]) if down_idx < len(prices) else None
     
-    print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
-    print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
+    # 如果有两个 token，尝试 CLOB；否则直接用 outcomePrices
+    if len(clob_ids) >= 2:
+        # 第一个 token 是 UP，第二个是 DOWN
+        up_tid = clob_ids[0]
+        down_tid = clob_ids[1]
+        
+        print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
+        print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
 
-    if not up_tid or not down_tid:
-        print(f"[DATA][WARN] Missing token IDs", flush=True)
-        return 0.0, 0.0, window_slug
-
-    # 从 CLOB 获取实时中价
-    try:
-        mid_up = client.get_midpoint_price(up_tid)
-        mid_down = client.get_midpoint_price(down_tid)
-        print(f"[DATA]   CLOB mid: UP={mid_up} DOWN={mid_down}", flush=True)
-        if mid_up is not None and mid_down is not None:
-            yes = float(mid_up)
-            no = float(mid_down)
-            if 0 < yes < 1 and 0 < no < 1:
-                return yes, no, window_slug
-    except Exception as e:
-        print(f"[DATA][WARN] CLOB:", e, flush=True)
-
+        if not up_tid or not down_tid:
+            print(f"[DATA][WARN] Missing token IDs", flush=True)
+        else:
+            # 从 CLOB 获取实时中价
+            try:
+                mid_up = client.get_midpoint_price(up_tid)
+                mid_down = client.get_midpoint_price(down_tid)
+                print(f"[DATA]   CLOB mid: UP={mid_up} DOWN={mid_down}", flush=True)
+                if mid_up is not None and mid_down is not None:
+                    yes = float(mid_up)
+                    no = float(mid_down)
+                    if 0 < yes < 1 and 0 < no < 1:
+                        return yes, no, window_slug
+            except Exception as e:
+                print(f"[DATA][WARN] CLOB:", e, flush=True)
+    else:
+        print(f"[DATA][WARN] Only {len(clob_ids)} token(s), using outcomePrices", flush=True)
+    
     # Fallback: outcomePrices
     if p_up and p_down:
         print(f"[DATA]   Gamma: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
