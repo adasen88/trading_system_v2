@@ -226,39 +226,52 @@ def _fetch_pm_price():
     p_up = float(prices[up_idx]) if up_idx < len(prices) else None
     p_down = float(prices[down_idx]) if down_idx < len(prices) else None
     
-    # 如果有两个 token，尝试 CLOB；否则直接用 outcomePrices
+    # 如果有两个 token，尝试 CLOB；否则价格不可用
     if len(clob_ids) >= 2:
         # 第一个 token 是 UP，第二个是 DOWN
         up_tid = clob_ids[0]
         down_tid = clob_ids[1]
         
-        print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
-        print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
+        print(f"[DATA]   UP_token={up_tid}", flush=True)
+        print(f"[DATA]   DOWN_token={down_tid}", flush=True)
 
         if not up_tid or not down_tid:
             print(f"[DATA][WARN] Missing token IDs", flush=True)
+            return 0.0, 0.0, window_slug
         else:
-            # 从 CLOB 获取实时中价
+            # 从 CLOB 获取实时中价（唯一允许的价格源）
             try:
                 mid_up = client.get_midpoint_price(up_tid)
                 mid_down = client.get_midpoint_price(down_tid)
                 print(f"[DATA]   CLOB mid: UP={mid_up} DOWN={mid_down}", flush=True)
-                if mid_up is not None and mid_down is not None:
-                    yes = float(mid_up)
-                    no = float(mid_down)
-                    if 0 < yes < 1 and 0 < no < 1:
+                
+                if mid_up is None or mid_down is None:
+                    print(f"[DATA][WARN] CLOB returned None prices", flush=True)
+                    return 0.0, 0.0, window_slug
+                
+                yes = float(mid_up)
+                no = float(mid_down)
+                
+                # 价格验证：必须在合理范围内
+                if 0 < yes < 1 and 0 < no < 1:
+                    # 检查价格和是否接近1.0（YES+NO≈1）
+                    price_sum = yes + no
+                    if 0.9 < price_sum < 1.1:  # 允许10%偏差
+                        print(f"[DATA]   Valid prices: YES={yes:.4f} NO={no:.4f} sum={price_sum:.4f}", flush=True)
                         return yes, no, window_slug
+                    else:
+                        print(f"[DATA][WARN] Invalid price sum: {price_sum:.4f}", flush=True)
+                        return 0.0, 0.0, window_slug
+                else:
+                    print(f"[DATA][WARN] Prices out of range: YES={yes:.4f} NO={no:.4f}", flush=True)
+                    return 0.0, 0.0, window_slug
+                    
             except Exception as e:
-                print(f"[DATA][WARN] CLOB:", e, flush=True)
+                print(f"[DATA][WARN] CLOB error:", e, flush=True)
+                return 0.0, 0.0, window_slug
     else:
-        print(f"[DATA][WARN] Only {len(clob_ids)} token(s), using outcomePrices", flush=True)
-    
-    # Fallback: outcomePrices
-    if p_up and p_down:
-        print(f"[DATA]   Gamma: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
-        return p_up, p_down, window_slug
-
-    return 0.0, 0.0, window_slug
+        print(f"[DATA][WARN] Only {len(clob_ids)} token(s), cannot trade", flush=True)
+        return 0.0, 0.0, window_slug
 
 def main():
     global _last_window_slug
