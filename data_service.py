@@ -88,54 +88,68 @@ def _fetch_pm_price():
         print(f"[DATA][WARN] get_markets:", e, flush=True)
         return 0.0, 0.0, window_slug
 
-    # 每行 = 一个 outcome（outcome 数组总是 ['Up','Down']，价格也是 [p_up, p_down]）
-    # 位置 0 = UP，位置 1 = DOWN
-    up_tid = down_tid = None
-
-    for _, row in markets.iterrows():
-        tid = row.get("clobTokenIds")
-        outcomes = row.get("outcomes") or []
-        prices_raw = row.get("outcomePrices") or []
-
-        if not isinstance(prices_raw, (list, tuple)):
-            try:
-                prices_raw = json.loads(prices_raw) if isinstance(prices_raw, str) else []
-            except:
-                prices_raw = []
-
-        # 找这个 token 在哪个位置（0=UP, 1=DOWN）
-        for i, outcome in enumerate(outcomes):
-            if i >= len(prices_raw) or not tid:
-                continue
-            o = str(outcome).lower()
-            if o == "up" and up_tid is None:
-                up_tid = tid
-                p_up = float(prices_raw[i])
-            elif o == "down" and down_tid is None:
-                down_tid = tid
-                p_down = float(prices_raw[i])
-
-    if up_tid and down_tid:
-        print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
-        print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
-    else:
-        print(f"[DATA][WARN] Token mismatch: UP={up_tid}, DOWN={down_tid}", flush=True)
+    # 每行 = 一个 token；outcomes=['Up','Down']，outcomePrices=[p_up,p_down]
+    # 固定：row0 → position0=UP, row1 → position1=DOWN（按 outcomes 数组索引）
+    rows = markets.to_dict("records")
+    if len(rows) < 2:
+        print(f"[DATA][WARN] Only {len(rows)} market rows, need at least 2", flush=True)
         return 0.0, 0.0, window_slug
 
-    # CLOB 实时中价
+    up_record = rows[0]
+    down_record = rows[1]
+
+    # 从 row 的 outcomes 数组中找位置
+    up_outcomes = up_record.get("outcomes") or []
+    down_outcomes = down_record.get("outcomes") or []
+    up_prices_raw = up_record.get("outcomePrices") or []
+    down_prices_raw = down_record.get("outcomePrices") or []
+
+    # 解析 outcomePrices（可能是 JSON 字符串或 list）
+    def parse_prices(raw):
+        if isinstance(raw, list):
+            return raw
+        try:
+            return json.loads(raw) if isinstance(raw, str) else []
+        except:
+            return []
+
+    up_prices = parse_prices(up_prices_raw)
+    down_prices = parse_prices(down_prices_raw)
+
+    # 找 UP 和 DOWN 在各自行中的位置
+    up_idx = next((i for i, o in enumerate(up_outcomes) if str(o).lower() == "up"), None)
+    down_idx = next((i for i, o in enumerate(down_outcomes) if str(o).lower() == "down"), None)
+
+    if up_idx is None or down_idx is None:
+        print(f"[DATA][WARN] Could not find UP/DOWN in outcomes: {up_outcomes} / {down_outcomes}", flush=True)
+        return 0.0, 0.0, window_slug
+
+    up_tid = up_record.get("clobTokenIds")
+    down_tid = down_record.get("clobTokenIds")
+    p_up = float(up_prices[up_idx]) if up_idx < len(up_prices) else None
+    p_down = float(down_prices[down_idx]) if down_idx < len(down_prices) else None
+
+    print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
+    print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
+
+    if not up_tid or not down_tid:
+        print(f"[DATA][WARN] Missing token IDs", flush=True)
+        return 0.0, 0.0, window_slug
+
+    # 从 CLOB 获取实时中价
     try:
         mid_up = client.get_midpoint_price(up_tid)
         mid_down = client.get_midpoint_price(down_tid)
+        print(f"[DATA]   CLOB mid: UP={mid_up} DOWN={mid_down}", flush=True)
         if mid_up is not None and mid_down is not None:
             yes = float(mid_up)
             no = float(mid_down)
             if 0 < yes < 1 and 0 < no < 1:
-                print(f"[DATA]   CLOB: UP={yes:.4f} DOWN={no:.4f}", flush=True)
                 return yes, no, window_slug
     except Exception as e:
-        print(f"[DATA][WARN] CLOB midpoint:", e, flush=True)
+        print(f"[DATA][WARN] CLOB:", e, flush=True)
 
-    # Fallback: Gamma outcomePrices
+    # Fallback: outcomePrices
     if p_up and p_down:
         print(f"[DATA]   Gamma: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
         return p_up, p_down, window_slug
