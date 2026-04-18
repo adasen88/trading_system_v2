@@ -49,6 +49,18 @@ class MarketDiscovery:
                 # 尝试搜索btc-updown-5m
                 search_results = self.gamma_client.search_markets("btc-updown-5m", limit=50)
                 print(f"[MarketDiscovery] Search 'btc-updown-5m' returned {len(search_results)} markets", flush=True)
+                
+                # 如果搜索返回空，尝试其他搜索词
+                if not search_results:
+                    print(f"[MarketDiscovery] Search returned empty, trying alternative keywords", flush=True)
+                    # 尝试btc-updown
+                    search_results = self.gamma_client.search_markets("btc-updown", limit=50)
+                    print(f"[MarketDiscovery] Search 'btc-updown' returned {len(search_results)} markets", flush=True)
+                    
+                    if not search_results:
+                        # 尝试btc
+                        search_results = self.gamma_client.search_markets("btc", limit=50)
+                        print(f"[MarketDiscovery] Search 'btc' returned {len(search_results)} markets", flush=True)
             except Exception as e:
                 print(f"[MarketDiscovery] Search failed: {e}", flush=True)
                 
