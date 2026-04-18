@@ -66,8 +66,6 @@ def _fetch_pm_price():
     global _last_window_slug
     now_ts = int(time.time())
     window_end = math.ceil(now_ts / 300) * 300
-
-    # BTC 5-min 窗口 slug（与 Polymarket series slug 对应）
     window_slug = "btc-updown-5m-" + str(window_end)
 
     if window_slug != _last_window_slug:
@@ -76,23 +74,7 @@ def _fetch_pm_price():
 
     client = _get_pm_client()
 
-    # 1. 找到当前活跃的 BTC 5-min series
-    try:
-        series = client.get_series(
-            slug="btc-up-or-down-5m",
-            expand_events=True,
-            closed=False,
-        )
-        active = series[series["eventsEndDate"] >= pd.Timestamp.now(tz="UTC")]
-        if active.empty:
-            print("[DATA][WARN] No active BTC 5-min events", flush=True)
-            return 0.0, 0.0, window_slug
-        event_slug = active["eventsSlug"].iloc[0]
-    except Exception as e:
-        print(f"[DATA][WARN] get_series:", e, flush=True)
-        return 0.0, 0.0, window_slug
-
-    # 2. 获取当前窗口的 CLOB 可用 token_id（expand_clob_token_ids=True）
+    # 获取当前窗口的 CLOB token（每行=一个token，outcomes同格）
     try:
         markets = client.get_markets(
             slug=[window_slug],
@@ -101,62 +83,58 @@ def _fetch_pm_price():
             expand_series=False,
         )
         if markets.empty:
-            print(f"[DATA][WARN] No market data for {window_slug}", flush=True)
+            print(f"[DATA][WARN] No market for {window_slug}", flush=True)
             return 0.0, 0.0, window_slug
-        row = markets.sort_values("endDate").iloc[0]
     except Exception as e:
         print(f"[DATA][WARN] get_markets:", e, flush=True)
         return 0.0, 0.0, window_slug
 
-    # 3. 提取 YES/NO CLOB token_id
-    clob_ids = row.get("clobTokenIds", []) or []
-    outcomes = row.get("outcomes", []) or []
+    # 每行：clobTokenIds=单值，outcomes=['Up','Down']，outcomePrices=[p_up, p_down]
+    # 找 Up token (outcomePrices[0]) 和 Down token (outcomePrices[1])
+    up_tid = down_tid = None
+    p_up = p_down = None
 
-    yes_tid = None
-    no_tid = None
-    for i, outcome in enumerate(outcomes):
-        if str(outcome).lower() == "yes" and i < len(clob_ids):
-            yes_tid = clob_ids[i]
-        elif str(outcome).lower() == "no" and i < len(clob_ids):
-            no_tid = clob_ids[i]
+    for _, row in markets.iterrows():
+        outcomes = row.get("outcomes") or []
+        prices_raw = row.get("outcomePrices") or []
+        tid = row.get("clobTokenIds")
 
-    if not yes_tid or not no_tid:
-        print(f"[DATA][WARN] Could not find YES/NO token_ids in {clob_ids} / {outcomes}", flush=True)
-        return 0.0, 0.0, window_slug
+        if not isinstance(prices_raw, (list, tuple)):
+            try:
+                prices_raw = json.loads(prices_raw) if isinstance(prices_raw, str) else []
+            except:
+                prices_raw = []
 
-    # 4. 从 CLOB 获取实时价格
-    try:
-        mid_yes = client.get_midpoint_price(yes_tid)
-        mid_no = client.get_midpoint_price(no_tid)
-        spread_yes = client.get_spread(yes_tid)
-        spread_no = client.get_spread(no_tid)
+        for i, outcome in enumerate(outcomes):
+            if str(outcome).lower() == "up" and i < len(prices_raw):
+                up_tid = tid
+                p_up = float(prices_raw[i])
+            elif str(outcome).lower() == "down" and i < len(prices_raw):
+                down_tid = tid
+                p_down = float(prices_raw[i])
 
-        if mid_yes is not None and mid_no is not None:
-            yes = float(mid_yes)
-            no = float(mid_no)
-            if 0 < yes < 1 and 0 < no < 1:
-                print(f"[DATA]   CLOB: YES={yes:.4f} NO={no:.4f} spread_yes={spread_yes:.4f} spread_no={spread_no:.4f}", flush=True)
-                return yes, no, window_slug
-    except Exception as e:
-        print(f"[DATA][WARN] CLOB price fetch:", e, flush=True)
+    if up_tid and down_tid:
+        print(f"[DATA]   tokens: UP={up_tid[:20]}... DOWN={down_tid[:20]}...", flush=True)
+        print(f"[DATA]   outcomePrices: UP={p_up} DOWN={p_down}", flush=True)
 
-    # 5. Fallback: Gamma outcomePrices
-    try:
-        GAMMA_URL = "https://gamma-api.polymarket.com/markets"
-        r = requests.get(GAMMA_URL, params={"slug": window_slug}, timeout=5)
-        if r.status_code == 200:
-            markets_g = r.json()
-            if markets_g:
-                prices_raw = markets_g[0].get("outcomePrices")
-                prices = json.loads(prices_raw) if isinstance(prices_raw, str) else (prices_raw or [])
-                if isinstance(prices, list) and len(prices) >= 2:
-                    yes = float(prices[0])
-                    no = float(prices[1])
-                    if yes > 0 and no > 0:
-                        print(f"[DATA]   Gamma fallback: YES={yes:.4f} NO={no:.4f}", flush=True)
-                        return yes, no, window_slug
-    except Exception:
-        pass
+    # 从 CLOB 获取实时价格
+    if up_tid and down_tid:
+        try:
+            mid_up = client.get_midpoint_price(up_tid)
+            mid_down = client.get_midpoint_price(down_tid)
+            if mid_up is not None and mid_down is not None:
+                yes = float(mid_up)
+                no = float(mid_down)
+                if 0 < yes < 1 and 0 < no < 1:
+                    print(f"[DATA]   CLOB mid: UP={yes:.4f} DOWN={no:.4f}", flush=True)
+                    return yes, no, window_slug
+        except Exception as e:
+            print(f"[DATA][WARN] CLOB:", e, flush=True)
+
+    # Fallback: outcomePrices
+    if p_up and p_down:
+        print(f"[DATA]   Gamma prices: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
+        return p_up, p_down, window_slug
 
     return 0.0, 0.0, window_slug
 
