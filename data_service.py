@@ -104,17 +104,24 @@ def _fetch_pm_price():
     if clob_ids_raw:
         if isinstance(clob_ids_raw, str):
             try:
-                clob_ids = json.loads(clob_ids_raw)
+                parsed = json.loads(clob_ids_raw)
+                # json.loads 可能返回整数 0 或其他非列表
+                if isinstance(parsed, list):
+                    clob_ids = parsed
+                else:
+                    print(f"[DATA][WARN] clobTokenIds parsed to non-list: {type(parsed)}={parsed}", flush=True)
+                    clob_ids = []
             except Exception as e:
                 print(f"[DATA][WARN] Failed to parse clobTokenIds JSON: {e}", flush=True)
                 clob_ids = []
         elif isinstance(clob_ids_raw, list):
             clob_ids = clob_ids_raw
         else:
-            print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}", flush=True)
+            print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}={clob_ids_raw}", flush=True)
+            clob_ids = []
     
     if len(clob_ids) < 2:
-        print(f"[DATA][WARN] Need at least 2 token IDs, got {len(clob_ids)}", flush=True)
+        print(f"[DATA][WARN] Need at least 2 token IDs, got {len(clob_ids)} (raw: {clob_ids_raw})", flush=True)
         return 0.0, 0.0, window_slug
     
     # 第一个 token 是 UP，第二个是 DOWN
