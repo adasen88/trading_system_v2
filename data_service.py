@@ -88,23 +88,44 @@ def _fetch_pm_price():
         print(f"[DATA][WARN] get_markets:", e, flush=True)
         return 0.0, 0.0, window_slug
 
-    # 每行 = 一个 token；outcomes=['Up','Down']，outcomePrices=[p_up,p_down]
-    # 固定：row0 → position0=UP, row1 → position1=DOWN（按 outcomes 数组索引）
+    # Gamma 返回一个市场，clobTokenIds 是包含两个 token 的列表
+    # outcomes=['Up','Down'], outcomePrices=[p_up, p_down]
     rows = markets.to_dict("records")
-    if len(rows) < 2:
-        print(f"[DATA][WARN] Only {len(rows)} market rows, need at least 2", flush=True)
+    if len(rows) == 0:
+        print(f"[DATA][WARN] No market rows", flush=True)
         return 0.0, 0.0, window_slug
 
-    up_record = rows[0]
-    down_record = rows[1]
-
-    # 从 row 的 outcomes 数组中找位置
-    up_outcomes = up_record.get("outcomes") or []
-    down_outcomes = down_record.get("outcomes") or []
-    up_prices_raw = up_record.get("outcomePrices") or []
-    down_prices_raw = down_record.get("outcomePrices") or []
-
-    # 解析 outcomePrices（可能是 JSON 字符串或 list）
+    # 取第一行（应该只有一行）
+    market = rows[0]
+    
+    # 解析 clobTokenIds （可能是 JSON 字符串或列表）
+    clob_ids_raw = market.get("clobTokenIds")
+    clob_ids = []
+    if clob_ids_raw:
+        if isinstance(clob_ids_raw, str):
+            try:
+                clob_ids = json.loads(clob_ids_raw)
+            except Exception as e:
+                print(f"[DATA][WARN] Failed to parse clobTokenIds JSON: {e}", flush=True)
+                clob_ids = []
+        elif isinstance(clob_ids_raw, list):
+            clob_ids = clob_ids_raw
+        else:
+            print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}", flush=True)
+    
+    if len(clob_ids) < 2:
+        print(f"[DATA][WARN] Need at least 2 token IDs, got {len(clob_ids)}", flush=True)
+        return 0.0, 0.0, window_slug
+    
+    # 第一个 token 是 UP，第二个是 DOWN
+    up_tid = clob_ids[0]
+    down_tid = clob_ids[1]
+    
+    # 解析 outcomes 和 outcomePrices
+    outcomes = market.get("outcomes") or []
+    prices_raw = market.get("outcomePrices") or []
+    
+    # 解析 prices（可能是 JSON 字符串或列表）
     def parse_prices(raw):
         if isinstance(raw, list):
             return raw
@@ -112,23 +133,20 @@ def _fetch_pm_price():
             return json.loads(raw) if isinstance(raw, str) else []
         except:
             return []
-
-    up_prices = parse_prices(up_prices_raw)
-    down_prices = parse_prices(down_prices_raw)
-
-    # 找 UP 和 DOWN 在各自行中的位置
-    up_idx = next((i for i, o in enumerate(up_outcomes) if str(o).lower() == "up"), None)
-    down_idx = next((i for i, o in enumerate(down_outcomes) if str(o).lower() == "down"), None)
-
+    
+    prices = parse_prices(prices_raw)
+    
+    # 找 UP 和 DOWN 在 outcomes 中的位置
+    up_idx = next((i for i, o in enumerate(outcomes) if str(o).lower() == "up"), None)
+    down_idx = next((i for i, o in enumerate(outcomes) if str(o).lower() == "down"), None)
+    
     if up_idx is None or down_idx is None:
-        print(f"[DATA][WARN] Could not find UP/DOWN in outcomes: {up_outcomes} / {down_outcomes}", flush=True)
+        print(f"[DATA][WARN] Could not find UP/DOWN in outcomes: {outcomes}", flush=True)
         return 0.0, 0.0, window_slug
-
-    up_tid = up_record.get("clobTokenIds")
-    down_tid = down_record.get("clobTokenIds")
-    p_up = float(up_prices[up_idx]) if up_idx < len(up_prices) else None
-    p_down = float(down_prices[down_idx]) if down_idx < len(down_prices) else None
-
+    
+    p_up = float(prices[up_idx]) if up_idx < len(prices) else None
+    p_down = float(prices[down_idx]) if down_idx < len(prices) else None
+    
     print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
     print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
 

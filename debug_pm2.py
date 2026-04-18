@@ -24,10 +24,28 @@ for i, m in enumerate(markets):
     for j, t in enumerate(tokens):
         print(f"      [{j}] outcome={t.get('outcome')} token_id={t.get('token_id')}")
 
-# ── 2. 直接调 CLOB /price 和 /midpoint ──────────────────────
-clob_ids = (markets[0].get("clobTokenIds") or []) if markets else []
+# ── 2. 直接调 CLOB /price 和 /midpoint ────────────────────────────────────────────────────
+clob_ids_raw = markets[0].get("clobTokenIds") if markets else None
 print(f"\n[2] 直接调 CLOB API:")
-print(f"    clobTokenIds: {clob_ids}")
+print(f"    clobTokenIds raw: {clob_ids_raw}")
+print(f"    type: {type(clob_ids_raw)}")
+
+# 解析 clobTokenIds （可能是 JSON 字符串）
+clob_ids = []
+if clob_ids_raw:
+    if isinstance(clob_ids_raw, str):
+        try:
+            clob_ids = json.loads(clob_ids_raw)
+        except Exception as e:
+            print(f"    JSON parse error: {e}")
+            clob_ids = []
+    elif isinstance(clob_ids_raw, list):
+        clob_ids = clob_ids_raw
+    else:
+        print(f"    Unknown type: {type(clob_ids_raw)}")
+
+print(f"    parsed clobTokenIds: {clob_ids}")
+print(f"    length: {len(clob_ids)}")
 
 for tid in clob_ids:
     print(f"\n  Token: {tid}")
