@@ -134,30 +134,41 @@ def _fetch_pm_price():
         if not slug.startswith("btc-updown-5m-"):
             continue
             
-        # 检查是否为可交易市场
-        tokens = market.get("tokens") or []
-        if not isinstance(tokens, list):
-            tokens = []
-        
+        # 检查是否为可交易市场（仅依赖 CLOB token IDs）
         clob_ids_raw = market.get("clobTokenIds")
         clob_ids_possible = False
+        clob_ids = []
+        
         if clob_ids_raw:
             if isinstance(clob_ids_raw, str):
                 try:
                     parsed = json.loads(clob_ids_raw)
-                    clob_ids_possible = isinstance(parsed, list) and len(parsed) >= 2
-                except:
+                    if isinstance(parsed, list) and len(parsed) >= 2:
+                        clob_ids_possible = True
+                        clob_ids = parsed
+                except Exception as e:
+                    print(f"[DATA][DEBUG] Failed to parse clobTokenIds JSON for {slug}: {e}", flush=True)
                     pass
-            elif isinstance(clob_ids_raw, list):
-                clob_ids_possible = len(clob_ids_raw) >= 2
+            elif isinstance(clob_ids_raw, list) and len(clob_ids_raw) >= 2:
+                clob_ids_possible = True
+                clob_ids = clob_ids_raw
         
-        # 可交易条件：至少有 tokens 或可能的 clobTokenIds
-        if len(tokens) >= 2 or clob_ids_possible:
+        # 可交易条件：必须有至少2个CLOB token IDs
+        if clob_ids_possible:
             selected_market = market
             selected_slug = slug
+            # 预先存储解析的clob_ids
+            market["_parsed_clob_ids"] = clob_ids
             break
         else:
-            print(f"[DATA][SKIP] Non-tradable: {slug} tokens={len(tokens)}", flush=True)
+            # 记录原因
+            if clob_ids_raw:
+                if isinstance(clob_ids_raw, str):
+                    print(f"[DATA][SKIP] Non-tradable: {slug} clobTokenIds parse failed or <2 tokens", flush=True)
+                else:
+                    print(f"[DATA][SKIP] Non-tradable: {slug} clobTokenIds={clob_ids_raw}", flush=True)
+            else:
+                print(f"[DATA][SKIP] Non-tradable: {slug} clobTokenIds missing", flush=True)
     
     if not selected_market:
         print(f"[DATA][WARN] No tradable market found among {len(rows)} markets", flush=True)
@@ -176,55 +187,42 @@ def _fetch_pm_price():
         else:
             print(f"[DATA] Selected tradable market: {window_slug}", flush=True)
     
-    # 从选中的市场中重新获取字段
-    clob_ids_raw = market.get("clobTokenIds")
+    # 使用预先解析的 CLOB token IDs（如果存在）
+    clob_ids = market.get("_parsed_clob_ids")
     
-    # 解析 clobTokenIds
-    clob_ids = []
-    if clob_ids_raw:
-        if isinstance(clob_ids_raw, str):
-            try:
-                parsed = json.loads(clob_ids_raw)
-                # json.loads 可能返回整数 0 或其他非列表
-                if isinstance(parsed, list):
-                    clob_ids = parsed
-                else:
-                    print(f"[DATA][WARN] clobTokenIds parsed to non-list: {type(parsed)}={parsed}", flush=True)
+    if not clob_ids:
+        # 回退到原始解析逻辑
+        clob_ids_raw = market.get("clobTokenIds")
+        clob_ids = []
+        if clob_ids_raw:
+            if isinstance(clob_ids_raw, str):
+                try:
+                    parsed = json.loads(clob_ids_raw)
+                    # json.loads 可能返回整数 0 或其他非列表
+                    if isinstance(parsed, list):
+                        clob_ids = parsed
+                    else:
+                        print(f"[DATA][WARN] clobTokenIds parsed to non-list: {type(parsed)}={parsed}", flush=True)
+                        clob_ids = []
+                except Exception as e:
+                    print(f"[DATA][WARN] Failed to parse clobTokenIds JSON: {e}", flush=True)
                     clob_ids = []
-            except Exception as e:
-                print(f"[DATA][WARN] Failed to parse clobTokenIds JSON: {e}", flush=True)
+            elif isinstance(clob_ids_raw, list):
+                clob_ids = clob_ids_raw
+            else:
+                print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}={clob_ids_raw}", flush=True)
                 clob_ids = []
-        elif isinstance(clob_ids_raw, list):
-            clob_ids = clob_ids_raw
-        else:
-            print(f"[DATA][WARN] Unknown clobTokenIds type: {type(clob_ids_raw)}={clob_ids_raw}", flush=True)
-            clob_ids = []
     
-    # 解析 outcomes 和 outcomePrices
+    # 解析 outcomes（仅用于验证市场结构）
     outcomes = market.get("outcomes") or []
-    prices_raw = market.get("outcomePrices") or []
     
-    # 解析 prices（可能是 JSON 字符串或列表）
-    def parse_prices(raw):
-        if isinstance(raw, list):
-            return raw
-        try:
-            return json.loads(raw) if isinstance(raw, str) else []
-        except:
-            return []
-    
-    prices = parse_prices(prices_raw)
-    
-    # 找 UP 和 DOWN 在 outcomes 中的位置
+    # 找 UP 和 DOWN 在 outcomes 中的位置（仅验证）
     up_idx = next((i for i, o in enumerate(outcomes) if str(o).lower() == "up"), None)
     down_idx = next((i for i, o in enumerate(outcomes) if str(o).lower() == "down"), None)
     
     if up_idx is None or down_idx is None:
         print(f"[DATA][WARN] Could not find UP/DOWN in outcomes: {outcomes}", flush=True)
         return 0.0, 0.0, window_slug
-    
-    p_up = float(prices[up_idx]) if up_idx < len(prices) else None
-    p_down = float(prices[down_idx]) if down_idx < len(prices) else None
     
     # 如果有两个 token，尝试 CLOB；否则价格不可用
     if len(clob_ids) >= 2:
