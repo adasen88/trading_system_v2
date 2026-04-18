@@ -342,13 +342,30 @@ try:
                     import json
                     parsed = json.loads(clob_ids_raw)
                     print(f"[Gamma] _parse_clob_ids parsed: {parsed}, type: {type(parsed)}", flush=True)
+                    
+                    # 处理不同类型的解析结果
                     if isinstance(parsed, list):
                         result = [str(id_) for id_ in parsed]
-                        print(f"[Gamma] _parse_clob_ids str result: {result}", flush=True)
+                        print(f"[Gamma] _parse_clob_ids str->list result: {result}", flush=True)
+                        return result
+                    elif isinstance(parsed, (int, str)):
+                        # 单个token ID的情况（单个数字字符串）
+                        result = [str(parsed)]
+                        print(f"[Gamma] _parse_clob_ids str->single result: {result}", flush=True)
                         return result
                 except Exception as e:
                     print(f"[Gamma] _parse_clob_ids JSON parse error: {e}", flush=True)
                     pass
+            
+            # 尝试直接转换其他类型
+            if clob_ids_raw is not None:
+                try:
+                    result = [str(clob_ids_raw)]
+                    print(f"[Gamma] _parse_clob_ids direct conversion: {result}", flush=True)
+                    return result
+                except:
+                    pass
+            
             print(f"[Gamma] _parse_clob_ids returning empty list", flush=True)
             return []
     
