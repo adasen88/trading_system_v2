@@ -34,77 +34,65 @@ class MarketDiscovery:
         """
         发现BTC 5分钟可交易市场
         
-        通过直接查询当前活跃窗口的slug来获取市场（最稳定的方法）
-        每个窗口300秒（5分钟），slug格式：btc-updown-5m-{timestamp}
+        通过获取所有活跃市场并过滤出btc-updown-5m市场（最稳定的方法）
+        Gamma API: /markets?active=true&limit=1000
+        然后本地过滤并选择最新的市场
         """
         from datetime import datetime, timezone
         now_ts = int(time.time())
         
-        print(f"[MarketDiscovery] Discovering BTC 5min markets via direct slug query...", flush=True)
+        print(f"[MarketDiscovery] Discovering BTC 5min markets via get_all_active_markets...", flush=True)
         print(f"[MarketDiscovery] Current time: {datetime.fromtimestamp(now_ts, tz=timezone.utc).strftime('%H:%M:%S UTC')}", flush=True)
         
         try:
-            # 方法1: 直接使用slug查询（最稳定）
-            # 计算当前活跃窗口的结束时间（向上取整到最近的5分钟边界）
-            window_end = math.ceil(now_ts / 300) * 300
-            recent_slugs = []
+            # 方法1: 获取所有活跃市场（最稳定的方法）
+            print(f"[MarketDiscovery] Calling get_all_active_markets(limit=1000)...", flush=True)
+            all_markets = self.gamma_client.get_all_active_markets(limit=1000)
+            print(f"[MarketDiscovery] Got {len(all_markets)} active markets from Gamma API", flush=True)
             
-            for i in range(lookback_windows):
-                w_end = window_end - i * 300
-                if w_end <= 0:
-                    break
-                recent_slugs.append(f"btc-updown-5m-{w_end}")
+            # 过滤出BTC 5分钟市场
+            btc_markets = [m for m in all_markets if "btc-updown-5m-" in m.slug]
+            print(f"[MarketDiscovery] Found {len(btc_markets)} BTC 5min markets", flush=True)
             
-            if not recent_slugs:
-                print(f"[MarketDiscovery] No valid slugs generated", flush=True)
-                return []
+            if not btc_markets:
+                print(f"[MarketDiscovery] No BTC 5min markets found in active markets", flush=True)
+                
+                # 备选方法：使用slug查询（兼容性回退）
+                print(f"[MarketDiscovery] Trying slug query fallback...", flush=True)
+                window_end = math.ceil(now_ts / 300) * 300
+                recent_slugs = []
+                
+                for i in range(lookback_windows):
+                    w_end = window_end - i * 300
+                    if w_end <= 0:
+                        break
+                    recent_slugs.append(f"btc-updown-5m-{w_end}")
+                
+                if recent_slugs:
+                    print(f"[MarketDiscovery] Falling back to slug query: {recent_slugs[:3]}...", flush=True)
+                    fallback_markets = self.gamma_client.get_markets_by_slugs(recent_slugs)
+                    print(f"[MarketDiscovery] Slug query returned {len(fallback_markets)} markets", flush=True)
+                    btc_markets = [m for m in fallback_markets if "btc-updown-5m-" in m.slug]
+                    print(f"[MarketDiscovery] Found {len(btc_markets)} BTC markets via fallback", flush=True)
+                
+                if not btc_markets:
+                    print(f"[MarketDiscovery] No BTC markets found via any method", flush=True)
+                    return []
             
-            # 调试信息：显示时间戳对应的人类可读时间
-            debug_slugs = []
-            for slug in recent_slugs[:3]:
-                try:
-                    ts = int(slug.split("-")[-1])
-                    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-                    debug_slugs.append(f"{slug} ({dt.strftime('%H:%M:%S UTC')})")
-                except:
-                    debug_slugs.append(slug)
-            
-            print(f"[MarketDiscovery] Querying slugs: {debug_slugs}... (total {len(recent_slugs)})", flush=True)
-            
-            # 直接通过slug查询市场（最稳定的方法）
-            markets = self.gamma_client.get_markets_by_slugs(recent_slugs)
-            print(f"[MarketDiscovery] Direct slug query returned {len(markets)} markets", flush=True)
-            
-            # 如果直接查询返回空，尝试搜索作为备选
-            if not markets:
-                print(f"[MarketDiscovery] Direct slug query returned empty, trying search as fallback", flush=True)
-                try:
-                    # 尝试搜索btc-updown-5m
-                    markets = self.gamma_client.search_markets("btc-updown-5m", limit=50)
-                    print(f"[MarketDiscovery] Search 'btc-updown-5m' returned {len(markets)} markets", flush=True)
-                    
-                    if not markets:
-                        # 尝试btc-updown
-                        markets = self.gamma_client.search_markets("btc-updown", limit=50)
-                        print(f"[MarketDiscovery] Search 'btc-updown' returned {len(markets)} markets", flush=True)
-                        
-                        if not markets:
-                            # 尝试btc
-                            markets = self.gamma_client.search_markets("btc", limit=50)
-                            print(f"[MarketDiscovery] Search 'btc' returned {len(markets)} markets", flush=True)
-                except Exception as e:
-                    print(f"[MarketDiscovery] Search fallback failed: {e}", flush=True)
-            
-            if not markets:
-                print(f"[MarketDiscovery] No markets found via any method", flush=True)
-                return []
+            # 按slug排序（slug中的时间戳越大表示越新）
+            btc_markets.sort(key=lambda m: m.slug, reverse=True)
             
             # 打印找到的市场信息
-            btc_markets = [m for m in markets if "btc-updown-5m" in m.slug]
-            print(f"[MarketDiscovery] Found {len(btc_markets)} BTC 5min markets out of {len(markets)} total markets", flush=True)
-            
             for i, market in enumerate(btc_markets[:5]):
-                print(f"[MarketDiscovery] BTC Market {i}: slug={market.slug}, clob_token_ids={len(market.clob_token_ids)}, accepting_orders={market.accepting_orders}", flush=True)
+                # 解析slug中的时间戳
+                try:
+                    ts = int(market.slug.split("-")[-1])
+                    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                    time_str = dt.strftime('%H:%M:%S UTC')
+                except:
+                    time_str = "unknown"
+                
+                print(f"[MarketDiscovery] BTC Market {i}: slug={market.slug} ({time_str}), clob_token_ids={len(market.clob_token_ids)}, accepting_orders={market.accepting_orders}", flush=True)
             
             # 过滤可交易市场
             tradable_markets = []
@@ -121,6 +109,12 @@ class MarketDiscovery:
             tradable_markets.sort(key=lambda m: m.expires_at, reverse=True)
             
             print(f"[MarketDiscovery] Found {len(tradable_markets)} tradable BTC 5min markets", flush=True)
+            
+            if tradable_markets:
+                # 记录最新市场的详细信息
+                latest = tradable_markets[0]
+                print(f"[MarketDiscovery] Latest tradable market: slug={latest.slug}, expires_at={datetime.fromtimestamp(latest.expires_at, tz=timezone.utc).strftime('%H:%M:%S UTC')}", flush=True)
+            
             return tradable_markets
             
         except Exception as e:

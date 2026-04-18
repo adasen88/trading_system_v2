@@ -205,6 +205,47 @@ class GammaClient:
         except requests.RequestException as e:
             raise PolymarketAPIError(f"Gamma search request failed: {e}")
 
+    def get_all_active_markets(self, limit: int = 1000) -> List[Market]:
+        """
+        获取所有活跃市场（最稳定的方法）
+        
+        Args:
+            limit: 返回数量限制，默认1000
+            
+        Returns:
+            市场对象列表
+        """
+        self._rate_limit()
+        
+        try:
+            params = {"active": "true", "limit": limit}
+            response = self.session.get(
+                f"{self.BASE_URL}/markets",
+                params=params,
+                timeout=10
+            )
+            
+            if response.status_code == 429:
+                raise RateLimitError("Gamma API rate limit exceeded")
+            
+            response.raise_for_status()
+            
+            markets_data = response.json()
+            markets = []
+            
+            for market_data in markets_data[:limit]:
+                try:
+                    market = self._parse_market(market_data)
+                    markets.append(market)
+                except Exception as e:
+                    print(f"[Gamma] Failed to parse market in get_all_active_markets: {e}")
+                    continue
+            
+            return markets
+            
+        except requests.RequestException as e:
+            raise PolymarketAPIError(f"Gamma get_all_active_markets request failed: {e}")
+
 
 # 兼容层：包装polymarket-pandas（如果可用）
 try:
