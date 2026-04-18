@@ -238,8 +238,9 @@ try:
                         print(f"[Gamma] Row {idx} slug={row.get('slug')}, clobTokenIds type={type(clob_raw)}, value={repr(clob_raw)}", flush=True)
                 
                 if df.empty:
-                    print(f"[Gamma] DataFrame is empty", flush=True)
-                    return []
+                    print(f"[Gamma] DataFrame is empty, falling back to native Gamma API", flush=True)
+                    # 主动触发回退到原生实现
+                    raise Exception("polymarket-pandas returned empty DataFrame")
                 
                 markets = []
                 for idx, row in df.iterrows():
