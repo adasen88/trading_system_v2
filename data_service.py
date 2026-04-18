@@ -89,8 +89,9 @@ def _fetch_pm_price():
         print(f"[DATA][WARN] get_markets:", e, flush=True)
         return 0.0, 0.0, window_slug
 
-    # 每行：clobTokenIds=单值，outcomes=['Up','Down']，outcomePrices=[p_up, p_down]
-    # 找 Up token (outcomePrices[0]) 和 Down token (outcomePrices[1])
+    # 每行：clobTokenIds=单值(ERC1155)，outcomes=['Up','Down']，outcomePrices=[p_up, p_down]
+    # 两个行各自代表 Up token 和 Down token
+    # 找 UP token 和 DOWN token：遍历所有行，按 outcome 位置匹配
     up_tid = down_tid = None
     p_up = p_down = None
 
@@ -105,19 +106,21 @@ def _fetch_pm_price():
             except:
                 prices_raw = []
 
+        # 按 outcome 位置匹配（两行各自代表一个 outcome）
         for i, outcome in enumerate(outcomes):
-            if str(outcome).lower() == "up" and i < len(prices_raw):
-                up_tid = tid
-                p_up = float(prices_raw[i])
-            elif str(outcome).lower() == "down" and i < len(prices_raw):
-                down_tid = tid
-                p_down = float(prices_raw[i])
+            if i < len(prices_raw) and tid:
+                if str(outcome).lower() == "up":
+                    up_tid = tid
+                    p_up = float(prices_raw[i])
+                elif str(outcome).lower() == "down":
+                    down_tid = tid
+                    p_down = float(prices_raw[i])
 
     if up_tid and down_tid:
-        print(f"[DATA]   tokens: UP={up_tid[:20]}... DOWN={down_tid[:20]}...", flush=True)
-        print(f"[DATA]   outcomePrices: UP={p_up} DOWN={p_down}", flush=True)
+        print(f"[DATA]   UP token={up_tid[:30]}... p={p_up}", flush=True)
+        print(f"[DATA]   DOWN token={down_tid[:30]}... p={p_down}", flush=True)
 
-    # 从 CLOB 获取实时价格
+    # 从 CLOB 获取实时中价
     if up_tid and down_tid:
         try:
             mid_up = client.get_midpoint_price(up_tid)
@@ -133,10 +136,10 @@ def _fetch_pm_price():
 
     # Fallback: outcomePrices
     if p_up and p_down:
-        print(f"[DATA]   Gamma prices: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
+        print(f"[DATA]   Gamma: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
         return p_up, p_down, window_slug
 
-    return 0.0, 0.0, window_slug
+    print(f"[DATA][WARN] No prices found, UP={up_tid}, DOWN={down_tid}, p_up={p_up}, p_down={p_down}", flush=True)
 
 def main():
     global _last_window_slug
