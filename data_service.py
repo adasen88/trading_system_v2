@@ -69,16 +69,24 @@ def _fetch_pm_price():
     client = _get_pm_client()
     
     try:
-        # 获取最近的 BTC 5分钟市场（最多 20 个）
+        # 生成最近 10 个窗口的 slug
+        window_end = math.ceil(now_ts / 300) * 300
+        recent_slugs = []
+        for i in range(10):  # 当前窗口 + 前9个
+            w_end = window_end - i * 300
+            if w_end <= 0:
+                break
+            recent_slugs.append(f"btc-updown-5m-{w_end}")
+        
+        # 获取这些窗口的市场
         markets = client.get_markets(
-            query="btc-updown-5m",
+            slug=recent_slugs,
             expand_clob_token_ids=True,
             expand_events=False,
             expand_series=False,
-            limit=20,
         )
         if markets.empty:
-            print(f"[DATA][WARN] No BTC 5min markets found", flush=True)
+            print(f"[DATA][WARN] No BTC 5min markets found among {len(recent_slugs)} slugs", flush=True)
             return 0.0, 0.0, ""
     except Exception as e:
         print(f"[DATA][WARN] get_markets:", e, flush=True)
