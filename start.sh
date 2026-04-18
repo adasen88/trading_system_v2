@@ -29,7 +29,7 @@ echo "  PID: $EXEC_PID"
 # ── 3. API Server ─────────────────────────────────────
 echo "[3/3] 启动 API Server (port 9000)..."
 cd "$SCRIPT_DIR"
-python3 -m uvicorn api_server:app --port 9000 --host 0.0.0.0 &
+python3 -m python3 -m uvicorn api_server:app --port 9000 --host 0.0.0.0 &
 API_PID=$!
 echo "  PID: $API_PID"
 
