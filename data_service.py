@@ -5,14 +5,13 @@ import json, os, time, math, requests
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(SCRIPT_DIR, "..", "state.json")
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
-CLOB_URL = "https://clob.polymarket.com/book"
+CLOB_URL = "https://clob.polymarket.com"
 
 BTC_INTERVAL = 5
-PM_INTERVAL = 0.1
+PM_INTERVAL = 2   # PM 轮询间隔（秒）
 HIST_INTERVAL = 60
 
 _last_window_end = 0
-_cached_condition_id = None
 _cached_yes_token = None
 _cached_no_token = None
 
@@ -59,47 +58,44 @@ def fetch_candles(interval, limit=100):
     return []
 
 def _fetch_clob_price(token_id: str) -> tuple[float, float] | None:
-    """从 CLOB 获取单个 token 的 bid/ask，返 (bid, ask)"""
+    """从 CLOB /price 接口获取最佳买/卖价，返回 (bid, ask)"""
     try:
-        r = requests.get(CLOB_URL, params={"token_id": token_id}, timeout=3,
+        r_bid = requests.get(CLOB_URL + "/price",
+            params={"token_id": token_id, "side": "BUY"}, timeout=3,
             headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code == 200:
-            book = r.json()
-            bids = book.get("bids", [])
-            asks = book.get("asks", [])
-            if bids and asks:
-                best_bid = float(bids[0]["price"])
-                best_ask = float(asks[0]["price"])
-                return best_bid, best_ask
+        r_ask = requests.get(CLOB_URL + "/price",
+            params={"token_id": token_id, "side": "SELL"}, timeout=3,
+            headers={"User-Agent": "Mozilla/5.0"})
+        if r_bid.status_code == 200 and r_ask.status_code == 200:
+            bid = float(r_bid.json().get("price", 0))
+            ask = float(r_ask.json().get("price", 0))
+            if bid > 0 and ask > 0:
+                return bid, ask
     except Exception:
         pass
     return None
 
 def _fetch_pm_price():
-    global _cached_condition_id, _cached_yes_token, _cached_no_token, _last_window_end
-    slug = "btc-updown-5m-" + str(math.ceil(time.time() / 300) * 300)
+    global _cached_yes_token, _cached_no_token, _last_window_end
     now_ts = int(time.time())
-    window_end = math.ceil(time.time() / 300) * 300
+    window_end = math.ceil(now_ts / 300) * 300
+    slug = "btc-updown-5m-" + str(window_end)
 
-    # 窗口切换时重新获取 token_id
     if window_end != _last_window_end:
         _last_window_end = window_end
-        _cached_condition_id = None
         _cached_yes_token = None
         _cached_no_token = None
         remaining = window_end - now_ts
-        print(f"[DATA]   → window ends in {remaining}s", flush=True)
+        print(f"[DATA] PM window: {slug} (ends in {remaining}s)", flush=True)
 
-    # 如果还没缓存 token_id，从 Gamma 获取
+    # 每个新窗口获取一次 token_id
     if _cached_yes_token is None:
         try:
             r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
             if r.status_code == 200:
                 markets = r.json()
                 if markets:
-                    m = markets[0]
-                    _cached_condition_id = m.get("conditionId")
-                    clob_ids = m.get("clobTokenIds") or []
+                    clob_ids = markets[0].get("clobTokenIds") or []
                     if len(clob_ids) >= 2:
                         _cached_yes_token = clob_ids[0]
                         _cached_no_token = clob_ids[1]
@@ -107,7 +103,7 @@ def _fetch_pm_price():
             print(f"[DATA][WARN] PM gamma:", e, flush=True)
             return 0.0, 0.0, slug
 
-    # 优先：Gamma outcomePrices（上次成交价，更稳定）
+    # 优先：Gamma outcomePrices（上次成交价）
     try:
         r = requests.get(GAMMA_URL, params={"slug": slug}, timeout=5)
         if r.status_code == 200:
@@ -122,7 +118,7 @@ def _fetch_pm_price():
     except Exception:
         pass
 
-    # Fallback：CLOB bid/ask 中价
+    # Fallback：CLOB /price 实时最佳买卖价
     if _cached_yes_token:
         result = _fetch_clob_price(_cached_yes_token)
         if result:
