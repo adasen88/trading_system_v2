@@ -74,7 +74,6 @@ def _fetch_pm_price():
 
     client = _get_pm_client()
 
-    # 获取当前窗口的 CLOB token（每行=一个token，outcomes同格）
     try:
         markets = client.get_markets(
             slug=[window_slug],
@@ -89,16 +88,14 @@ def _fetch_pm_price():
         print(f"[DATA][WARN] get_markets:", e, flush=True)
         return 0.0, 0.0, window_slug
 
-    # 每行：clobTokenIds=单值(ERC1155)，outcomes=['Up','Down']，outcomePrices=[p_up, p_down]
-    # 两个行各自代表 Up token 和 Down token
-    # 找 UP token 和 DOWN token：遍历所有行，按 outcome 位置匹配
+    # 每行 = 一个 outcome（outcome 数组总是 ['Up','Down']，价格也是 [p_up, p_down]）
+    # 位置 0 = UP，位置 1 = DOWN
     up_tid = down_tid = None
-    p_up = p_down = None
 
     for _, row in markets.iterrows():
+        tid = row.get("clobTokenIds")
         outcomes = row.get("outcomes") or []
         prices_raw = row.get("outcomePrices") or []
-        tid = row.get("clobTokenIds")
 
         if not isinstance(prices_raw, (list, tuple)):
             try:
@@ -106,40 +103,44 @@ def _fetch_pm_price():
             except:
                 prices_raw = []
 
-        # 按 outcome 位置匹配（两行各自代表一个 outcome）
+        # 找这个 token 在哪个位置（0=UP, 1=DOWN）
         for i, outcome in enumerate(outcomes):
-            if i < len(prices_raw) and tid:
-                if str(outcome).lower() == "up":
-                    up_tid = tid
-                    p_up = float(prices_raw[i])
-                elif str(outcome).lower() == "down":
-                    down_tid = tid
-                    p_down = float(prices_raw[i])
+            if i >= len(prices_raw) or not tid:
+                continue
+            o = str(outcome).lower()
+            if o == "up" and up_tid is None:
+                up_tid = tid
+                p_up = float(prices_raw[i])
+            elif o == "down" and down_tid is None:
+                down_tid = tid
+                p_down = float(prices_raw[i])
 
     if up_tid and down_tid:
-        print(f"[DATA]   UP token={up_tid[:30]}... p={p_up}", flush=True)
-        print(f"[DATA]   DOWN token={down_tid[:30]}... p={p_down}", flush=True)
+        print(f"[DATA]   UP_token={up_tid} p={p_up}", flush=True)
+        print(f"[DATA]   DOWN_token={down_tid} p={p_down}", flush=True)
+    else:
+        print(f"[DATA][WARN] Token mismatch: UP={up_tid}, DOWN={down_tid}", flush=True)
+        return 0.0, 0.0, window_slug
 
-    # 从 CLOB 获取实时中价
-    if up_tid and down_tid:
-        try:
-            mid_up = client.get_midpoint_price(up_tid)
-            mid_down = client.get_midpoint_price(down_tid)
-            if mid_up is not None and mid_down is not None:
-                yes = float(mid_up)
-                no = float(mid_down)
-                if 0 < yes < 1 and 0 < no < 1:
-                    print(f"[DATA]   CLOB mid: UP={yes:.4f} DOWN={no:.4f}", flush=True)
-                    return yes, no, window_slug
-        except Exception as e:
-            print(f"[DATA][WARN] CLOB:", e, flush=True)
+    # CLOB 实时中价
+    try:
+        mid_up = client.get_midpoint_price(up_tid)
+        mid_down = client.get_midpoint_price(down_tid)
+        if mid_up is not None and mid_down is not None:
+            yes = float(mid_up)
+            no = float(mid_down)
+            if 0 < yes < 1 and 0 < no < 1:
+                print(f"[DATA]   CLOB: UP={yes:.4f} DOWN={no:.4f}", flush=True)
+                return yes, no, window_slug
+    except Exception as e:
+        print(f"[DATA][WARN] CLOB midpoint:", e, flush=True)
 
-    # Fallback: outcomePrices
+    # Fallback: Gamma outcomePrices
     if p_up and p_down:
         print(f"[DATA]   Gamma: UP={p_up:.4f} DOWN={p_down:.4f}", flush=True)
         return p_up, p_down, window_slug
 
-    print(f"[DATA][WARN] No prices found, UP={up_tid}, DOWN={down_tid}, p_up={p_up}, p_down={p_down}", flush=True)
+    return 0.0, 0.0, window_slug
 
 def main():
     global _last_window_slug
