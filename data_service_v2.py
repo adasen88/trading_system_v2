@@ -10,6 +10,7 @@ import logging
 
 from market_discovery import get_market_discovery, TradableMarket
 from price_stream import get_price_stream, PriceData, StreamConfig
+from poll_engine import start_poll_engine, PollEngine
 from polymarket_client.errors import MarketNotTradableError, PriceStreamError
 
 
@@ -26,6 +27,10 @@ class DataServiceV2:
         # 服务组件
         self.market_discovery = get_market_discovery()
         self.price_stream = None
+        # 轮询引擎
+        self.poll_engine = None
+        if PollEngine:
+            self.poll_engine = start_poll_engine(interval=0.1)  # 100ms
         
         # 状态
         self.current_market: Optional[TradableMarket] = None
@@ -200,6 +205,9 @@ class DataServiceV2:
                     logger.info(f"Selected tradable market: {market.slug} (ends in {market.expires_at - time.time():.0f}s)")
                     self.current_market = market
                 
+                # 更新轮询引擎token列表
+                if self.poll_engine and hasattr(market, "clob_token_ids"):
+                    self.poll_engine.update_tokens(market.clob_token_ids)
                 return market
             else:
                 if self.current_market:
