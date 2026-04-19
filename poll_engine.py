@@ -145,7 +145,8 @@ def start_poll_engine(tokens=None, interval=0.1):
     return engine
 
 if __name__ == "__main__":
-    # 测试 - 所有print语句确保在一行内
+    # 测试 - 简化的测试代码，确保无语法错误
+    print("PollEngine 测试（简化版）")
     test_tokens = [
         "2600000000000000000000000000000000000000000000000000000000000000",
         "4400000000000000000000000000000000000000000000000000000000000000"
@@ -153,12 +154,12 @@ if __name__ == "__main__":
     engine = start_poll_engine(test_tokens)
     
     try:
-        for i in range(10):
-            print(f"
---- Sample {i+1} ---")
+        for i in range(3):
+            print(f"--- 测试 {i+1} ---")
             for token in test_tokens:
                 bid, ask, ts = PollEngine.get_price(token)
-                print(f"{token[:8]}: bid={bid:.4f}, ask={ask:.4f}, age={time.time()-ts:.3f}s")
+                print(f"{token[:8]}: bid={bid:.4f}, ask={ask:.4f}")
             time.sleep(0.5)
     finally:
         engine.stop()
+        print("测试完成")
