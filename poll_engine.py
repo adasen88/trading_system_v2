@@ -154,9 +154,11 @@ if __name__ == "__main__":
         for i in range(10):
             print(f"
 --- Sample {i+1} ---")
+--- Sample {i+1} ---")
             for token in test_tokens:
                 bid, ask, ts = PollEngine.get_price(token)
-                print(f"{token[:8]}: bid={bid:.4f}, ask={ask:.4f}, age={time.time()-ts:.3f}s")
+            print(f"
+--- Sample {i+1} ---")
             time.sleep(0.5)
     finally:
         engine.stop()
