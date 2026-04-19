@@ -145,20 +145,20 @@ def start_poll_engine(tokens=None, interval=0.1):
     return engine
 
 if __name__ == "__main__":
-    # 测试
-    test_tokens = ["2600000000000000000000000000000000000000000000000000000000000000",
-                   "4400000000000000000000000000000000000000000000000000000000000000"]
+    # 测试 - 所有print语句确保在一行内
+    test_tokens = [
+        "2600000000000000000000000000000000000000000000000000000000000000",
+        "4400000000000000000000000000000000000000000000000000000000000000"
+    ]
     engine = start_poll_engine(test_tokens)
     
     try:
         for i in range(10):
             print(f"
 --- Sample {i+1} ---")
---- Sample {i+1} ---")
             for token in test_tokens:
                 bid, ask, ts = PollEngine.get_price(token)
-            print(f"
---- Sample {i+1} ---")
+                print(f"{token[:8]}: bid={bid:.4f}, ask={ask:.4f}, age={time.time()-ts:.3f}s")
             time.sleep(0.5)
     finally:
         engine.stop()
