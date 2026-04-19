@@ -283,31 +283,77 @@ try:
                     # 主动触发回退到原生实现
                     raise Exception("polymarket-pandas returned empty DataFrame")
                 
-                markets = []
+                # 按slug分组，合并同一slug的YES/NO token IDs
+                markets_by_slug = {}
                 for idx, row in df.iterrows():
                     try:
+                        slug = row.get("slug", "")
+                        if not slug:
+                            continue
+                        
                         clob_raw = row.get("clobTokenIds")
                         clob_parsed = self._parse_clob_ids(clob_raw)
                         
-                        market = Market(
-                            slug=row.get("slug", ""),
-                            question=row.get("question", ""),
-                            outcomes=row.get("outcomes", []),
-                            outcome_prices=self._parse_prices(row.get("outcomePrices")),
-                            tokens=row.get("tokens", []),
-                            clob_token_ids=clob_parsed,
-                            accepting_orders=row.get("accepting_orders", False),
-                            end_date_iso=row.get("end_date_iso", ""),
-                            volume=float(row.get("volume", 0)),
-                            liquidity=float(row.get("liquidity", 0))
-                        )
-                        markets.append(market)
-                        print(f"[Gamma] Created market: {market.slug}, clob_token_ids={len(clob_parsed)}", flush=True)
+                        # 检查是否有outcome信息
+                        outcomes = row.get("outcomes", [])
+                        outcome_prices = self._parse_prices(row.get("outcomePrices"))
+                        
+                        # 如果已经存在该slug的市场，合并token IDs
+                        if slug in markets_by_slug:
+                            existing = markets_by_slug[slug]
+                            # 合并token IDs（去重）
+                            combined_tokens = list(set(existing["clob_token_ids"] + clob_parsed))
+                            existing["clob_token_ids"] = combined_tokens
+                            
+                            # 如果这个行有更完整的outcomes信息，更新
+                            if outcomes and not existing["outcomes"]:
+                                existing["outcomes"] = outcomes
+                            if outcome_prices and not existing["outcome_prices"]:
+                                existing["outcome_prices"] = outcome_prices
+                            
+                            print(f"[Gamma] Merged token IDs for slug {slug}: now has {len(combined_tokens)} token IDs", flush=True)
+                        else:
+                            # 创建新市场记录
+                            markets_by_slug[slug] = {
+                                "slug": slug,
+                                "question": row.get("question", ""),
+                                "outcomes": outcomes,
+                                "outcome_prices": outcome_prices,
+                                "tokens": row.get("tokens", []),
+                                "clob_token_ids": clob_parsed,
+                                "accepting_orders": row.get("accepting_orders", False),
+                                "end_date_iso": row.get("end_date_iso", ""),
+                                "volume": float(row.get("volume", 0)),
+                                "liquidity": float(row.get("liquidity", 0))
+                            }
+                            print(f"[Gamma] Created market record for {slug}: {len(clob_parsed)} token IDs", flush=True)
                     except Exception as e:
-                        print(f"[Gamma] Failed to parse pandas row {idx}: {e}", flush=True)
+                        print(f"[Gamma] Failed to process pandas row {idx}: {e}", flush=True)
                         continue
                 
-                print(f"[Gamma] Returning {len(markets)} markets", flush=True)
+                # 从分组数据创建Market对象
+                markets = []
+                for slug, data in markets_by_slug.items():
+                    try:
+                        market = Market(
+                            slug=data["slug"],
+                            question=data["question"],
+                            outcomes=data["outcomes"],
+                            outcome_prices=data["outcome_prices"],
+                            tokens=data["tokens"],
+                            clob_token_ids=data["clob_token_ids"],
+                            accepting_orders=data["accepting_orders"],
+                            end_date_iso=data["end_date_iso"],
+                            volume=data["volume"],
+                            liquidity=data["liquidity"]
+                        )
+                        markets.append(market)
+                        print(f"[Gamma] Final market: {market.slug}, clob_token_ids={len(market.clob_token_ids)}", flush=True)
+                    except Exception as e:
+                        print(f"[Gamma] Failed to create Market object for {slug}: {e}", flush=True)
+                        continue
+                
+                print(f"[Gamma] Returning {len(markets)} markets (after merging)", flush=True)
                 return markets
                 
             except Exception as e:
