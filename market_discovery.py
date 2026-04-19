@@ -186,6 +186,12 @@ class MarketDiscovery:
                 f"Insufficient CLOB token IDs: {len(market.clob_token_ids)}"
             )
         
+        # 2. 检查市场是否接受订单（必须为True）
+        if not getattr(market, "accepting_orders", False):
+            raise MarketNotTradableError(
+                market.slug,
+                "Market not accepting orders"
+            )
         # 2. 记录市场状态（调试用）
         print(f"[MarketDiscovery] Market {market.slug}: clob_token_ids={len(market.clob_token_ids)}, accepting_orders={market.accepting_orders}, tokens={len(market.tokens)}", flush=True)
         
